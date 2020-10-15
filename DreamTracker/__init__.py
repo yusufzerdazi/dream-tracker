@@ -9,6 +9,13 @@ from azure.ai.textanalytics import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 
+proxy = 'http://pi.zerdazi.com:8118'
+
+os.environ['http_proxy'] = proxy
+os.environ['HTTP_PROXY'] = proxy
+os.environ['https_proxy'] = proxy
+os.environ['HTTPS_PROXY'] = proxy
+
 GOOGLE_EMAIL = os.getenv('GoogleEmail')
 GOOGLE_PASSWORD = os.getenv('GooglePassword')
 STORAGE = os.getenv('StorageAccountConnectionString')
