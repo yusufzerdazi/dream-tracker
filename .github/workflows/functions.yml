@@ -1,49 +1,45 @@
-name: functions
+name: Function App Deployment
 
 on:
   push:
-    paths:
-    - backend/**
-    - .github/workflows/backend.yml
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - '**.bicep'
+      - '.github/workflows/infra.yml'
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_NAME: dreamtracker  # set this to your function app name
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'   # set this to the path to your function app project
-  PYTHON_VERSION: '3.11'                # set this to the python version to use
+  PYTHON_VERSION: '3.11'
 
 jobs:
-  build-and-deploy:
+  deploy-function:
     runs-on: ubuntu-latest
     steps:
-    - name: 'Checkout GitHub Action'
-      uses: actions/checkout@v4
-
-    - name: Setup Python ${{ env.PYTHON_VERSION }} Environment
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-
-    - name: 'Resolve Project Dependencies Using Pip'
-      shell: bash
-      run: |
-        pushd './${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt --target=".python_packages/lib/site-packages"
-        popd
-
-    - name: 'Login to Azure'
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    - name: 'Run Azure Functions Action'
-      uses: Azure/functions-action@v1
-      id: fa
-      with:
-        app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-        package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-        publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
-        scm-do-build-during-deployment: true
-        enable-oryx-build: true
-        linuxFxVersion: 'PYTHON|${pythonVersion}' 
+      - name: 'Checkout GitHub Action'
+        uses: actions/checkout@v4
+      
+      - name: 'Login to Azure'
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+            
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: 'Resolve Project Dependencies Using Pip'
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+      
+      - name: 'Run Azure Functions Action'
+        uses: Azure/functions-action@v1
+        with:
+          app-name: dreamtrackerfunctions
+          package: .
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true 
