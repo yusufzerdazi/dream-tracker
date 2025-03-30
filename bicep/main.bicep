@@ -163,6 +163,7 @@ resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
         allowedOrigins: [
           'https://yusuf.zerdazi.com'
           'http://localhost:5173'
+          'https://portal.azure.com'
         ]
         supportCredentials: false
       }
