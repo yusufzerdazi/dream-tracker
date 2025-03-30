@@ -36,7 +36,7 @@ var hostingPlanName = appName
 var applicationInsightsName = appName
 var storageAccountName = 'dreamtracker'
 var containerName = 'dreams'
-var cognitiveServicesAccountName = 'dreamtracker1'
+var cognitiveServicesAccountName = 'dreamtracker'
 var functionWorkerRuntime = runtime
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' = {

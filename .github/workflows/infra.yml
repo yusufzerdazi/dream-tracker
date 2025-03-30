@@ -1,6 +1,10 @@
-name: Deploy Azure Infrastructure with Bicep
+name: infra
 
 on:
+  push:
+    paths:
+    - '**.bicep'
+    - .github/workflows/bicep.yml
   workflow_dispatch:
 
 jobs:
