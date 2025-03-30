@@ -7,3 +7,4 @@ gkeepapi>=0.14.2
 azure-ai-textanalytics>=5.3.0
 azure-core>=1.29.0
 azure-storage-blob>=12.19.0
+cryptography<39.0.0
