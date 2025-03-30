@@ -3,7 +3,6 @@ name: Deploy DreamTracker to Azure Functions
 on:
   push:
     branches:
-      - master
       - main
   workflow_dispatch:
 

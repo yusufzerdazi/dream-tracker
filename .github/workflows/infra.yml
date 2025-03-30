@@ -2,26 +2,6 @@ name: Deploy Azure Infrastructure with Bicep
 
 on:
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy to'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - test
-          - prod
-      resourceGroupName:
-        description: 'Resource Group Name'
-        required: true
-        default: 'rg-dreamtracker-dev'
-        type: string
-      location:
-        description: 'Azure Region'
-        required: true
-        default: 'eastus'
-        type: string
 
 jobs:
   deploy-infrastructure:
@@ -39,29 +19,29 @@ jobs:
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            if [ $(az group exists --name ${{ github.event.inputs.resourceGroupName }}) = false ]; then
-              az group create --name ${{ github.event.inputs.resourceGroupName }} --location ${{ github.event.inputs.location }}
+            if [ $(az group exists --name dreamtracker) = false ]; then
+              az group create --name dreamtracker --location northeurope
             fi
 
       - name: 'Deploy Azure Infrastructure with Bicep'
         uses: azure/arm-deploy@v1
         with:
           scope: 'resourcegroup'
-          resourceGroupName: ${{ github.event.inputs.resourceGroupName }}
+          resourceGroupName: dreamtracker
           template: './bicep/main.bicep'
-          deploymentName: 'dreamtracker-${{ github.event.inputs.environment }}-${{ github.run_number }}'
+          deploymentName: 'dreamtracker-${{ github.run_number }}'
           parameters: >
-            appName=dreamtracker-${{ github.event.inputs.environment }}
-            location=${{ github.event.inputs.location }}
+            appName=dreamtracker
+            location=northeurope
 
       - name: 'Get Function App Publish Profile'
         uses: azure/CLI@v1
         id: get-publish-profile
         with:
           inlineScript: |
-            FUNCTION_APP_NAME=$(az functionapp list --resource-group ${{ github.event.inputs.resourceGroupName }} --query "[0].name" --output tsv)
+            FUNCTION_APP_NAME=$(az functionapp list --resource-group dreamtracker --query "[0].name" --output tsv)
             echo "::set-output name=functionAppName::$FUNCTION_APP_NAME"
-            PUBLISH_PROFILE=$(az functionapp deployment list-publishing-profiles --name $FUNCTION_APP_NAME --resource-group ${{ github.event.inputs.resourceGroupName }} --xml)
+            PUBLISH_PROFILE=$(az functionapp deployment list-publishing-profiles --name $FUNCTION_APP_NAME --resource-group dreamtracker --xml)
             echo "::add-mask::$PUBLISH_PROFILE"
             echo "::set-output name=publishProfile::$PUBLISH_PROFILE"
 
