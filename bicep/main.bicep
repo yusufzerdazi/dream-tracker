@@ -31,7 +31,7 @@ param pythonVersion string = '3.11'
 @description('The SKU of App Service Plan')
 param sku string = 'Y1'
 
-var functionAppName = appName
+var functionAppName = 'dreamtrackerfunctions'
 var hostingPlanName = appName
 var applicationInsightsName = appName
 var storageAccountName = 'dreamtracker'
