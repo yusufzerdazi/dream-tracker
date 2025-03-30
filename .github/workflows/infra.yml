@@ -31,8 +31,9 @@ jobs:
           template: './bicep/main.bicep'
           deploymentName: 'dreamtracker-${{ github.run_number }}'
           parameters: >
-            appName=dreamtracker
-            location=northeurope
+            googleEmail=${{ vars.GOOGLEEMAIL }}
+            googlePassword=${{ secrets.GOOGLEPASSWORD }}
+
 
       - name: 'Get Function App Publish Profile'
         uses: azure/CLI@v1

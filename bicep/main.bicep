@@ -1,5 +1,12 @@
 @description('The name of the function app that you wish to create.')
-param appName string = 'dreamtracker${uniqueString(resourceGroup().id)}'
+param appName string = 'dreamtracker'
+
+@description('The email of the Google account.')
+param googleEmail string
+
+@description('The password of the Google account.')
+@secure()
+param googlePassword string
 
 @description('Storage Account type')
 @allowed([
@@ -27,9 +34,9 @@ param sku string = 'Y1'
 var functionAppName = appName
 var hostingPlanName = appName
 var applicationInsightsName = appName
-var storageAccountName = '${uniqueString(resourceGroup().id)}azfunctions'
+var storageAccountName = 'dreamtracker'
 var containerName = 'dreams'
-var cognitiveServicesAccountName = '${appName}cognitive'
+var cognitiveServicesAccountName = 'dreamtracker'
 var functionWorkerRuntime = runtime
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' = {
@@ -72,19 +79,10 @@ resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
   kind: 'web'
   properties: {
     Application_Type: 'web'
-    Request_Source: 'rest'
-    WorkspaceResourceId: logAnalyticsWorkspace.id
-  }
-}
-
-resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
-  name: '${appName}-la'
-  location: location
-  properties: {
-    sku: {
-      name: 'PerGB2018'
-    }
-    retentionInDays: 30
+    Request_Source: 'IbizaWebAppExtensionCreate'
+    RetentionInDays: 90
+    publicNetworkAccessForIngestion: 'Enabled'
+    publicNetworkAccessForQuery: 'Enabled'
   }
 }
 
@@ -123,6 +121,14 @@ module functionApp 'modules/function-app.bicep' = {
       {
         name: 'CognitiveServicesKey'
         value: cognitiveServices.listKeys().key1
+      }
+      {
+        name: 'GoogleEmail'
+        value: googleEmail
+      }
+      {
+        name: 'GooglePassword'
+        value: googlePassword
       }
     ]
   }
