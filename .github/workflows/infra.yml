@@ -4,12 +4,16 @@ on:
   push:
     paths:
     - '**.bicep'
-    - .github/workflows/bicep.yml
+    - .github/workflows/infra.yml
   workflow_dispatch:
 
 jobs:
   deploy-infrastructure:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      
     steps:
       - name: 'Checkout GitHub Action'
         uses: actions/checkout@v4
@@ -35,9 +39,8 @@ jobs:
           template: './bicep/main.bicep'
           deploymentName: 'dreamtracker-${{ github.run_number }}'
           parameters: >
-            googleEmail=${{ vars.GOOGLEEMAIL }}
+            googleEmail=${{ secrets.GOOGLEEMAIL }}
             googlePassword=${{ secrets.GOOGLEPASSWORD }}
-
 
       - name: 'Get Function App Publish Profile'
         uses: azure/CLI@v1
@@ -45,13 +48,21 @@ jobs:
         with:
           inlineScript: |
             FUNCTION_APP_NAME=$(az functionapp list --resource-group dreamtracker --query "[0].name" --output tsv)
-            echo "::set-output name=functionAppName::$FUNCTION_APP_NAME"
+            echo "functionAppName=$FUNCTION_APP_NAME" >> $GITHUB_OUTPUT
             PUBLISH_PROFILE=$(az functionapp deployment list-publishing-profiles --name $FUNCTION_APP_NAME --resource-group dreamtracker --xml)
             echo "::add-mask::$PUBLISH_PROFILE"
-            echo "::set-output name=publishProfile::$PUBLISH_PROFILE"
+            echo "publishProfile=$PUBLISH_PROFILE" >> $GITHUB_OUTPUT
 
-      - name: 'Save Publish Profile as GitHub Secret'
-        uses: Azure/appservice-settings@v1
+      - name: 'Save Publish Profile as Repository Secret'
+        env:
+          PUBLISH_PROFILE: ${{ steps.get-publish-profile.outputs.publishProfile }}
+          FUNCTION_APP_NAME: ${{ steps.get-publish-profile.outputs.functionAppName }}
+        uses: azure/CLI@v1
         with:
-          app-name: ${{ steps.get-publish-profile.outputs.functionAppName }}
-          app-settings-json: '[{ "name": "AZURE_FUNCTIONAPP_PUBLISH_PROFILE", "value": "${{ steps.get-publish-profile.outputs.publishProfile }}" }]' 
+          inlineScript: |
+            # Store publish profile in Function App Settings
+            az functionapp config appsettings set --name $FUNCTION_APP_NAME \
+                                                 --resource-group dreamtracker \
+                                                 --settings AZURE_FUNCTIONAPP_PUBLISH_PROFILE="$PUBLISH_PROFILE"
+            
+            echo "Function App publish profile saved as app setting for future deployments" 

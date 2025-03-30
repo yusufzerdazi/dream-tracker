@@ -31,13 +31,12 @@ param pythonVersion string = '3.11'
 @description('The SKU of App Service Plan')
 param sku string = 'Y1'
 
-var functionAppName = 'dreamtrackerfunctions'
+var functionAppName = '${appName}functions'
 var hostingPlanName = appName
 var applicationInsightsName = appName
 var storageAccountName = 'dreamtracker'
 var containerName = 'dreams'
 var cognitiveServicesAccountName = 'dreamtrackercognitiveservices'
-var functionWorkerRuntime = runtime
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   name: storageAccountName
@@ -66,11 +65,14 @@ resource container 'Microsoft.Storage/storageAccounts/blobServices/containers@20
 resource hostingPlan 'Microsoft.Web/serverfarms@2022-03-01' = {
   name: hostingPlanName
   location: location
+  kind: 'linux'
   sku: {
     name: sku
     tier: 'Dynamic'
   }
-  properties: {}
+  properties: {
+    reserved: true // Required for Linux
+  }
 }
 
 resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
@@ -99,42 +101,80 @@ resource cognitiveServices 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
   }
 }
 
-module functionApp 'modules/function-app.bicep' = {
-  name: 'functionAppDeploy'
-  params: {
-    functionAppName: functionAppName
-    location: location
-    hostingPlanId: hostingPlan.id
-    storageConnectionString: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
-    appInsightsInstrumentationKey: applicationInsights.properties.InstrumentationKey
-    runtime: functionWorkerRuntime
-    pythonVersion: pythonVersion
-    appSettings: [
-      {
-        name: 'StorageAccountConnectionString'
-        value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
+resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
+  name: functionAppName
+  location: location
+  kind: 'functionapp,linux'
+  properties: {
+    serverFarmId: hostingPlan.id
+    reserved: true // Required for Linux
+    siteConfig: {
+      linuxFxVersion: 'PYTHON|${pythonVersion}'
+      pythonVersion: pythonVersion
+      appSettings: [
+        {
+          name: 'AzureWebJobsStorage'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
+        }
+        {
+          name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
+        }
+        {
+          name: 'WEBSITE_CONTENTSHARE'
+          value: toLower(functionAppName)
+        }
+        {
+          name: 'FUNCTIONS_EXTENSION_VERSION'
+          value: '~4'
+        }
+        {
+          name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
+          value: applicationInsights.properties.InstrumentationKey
+        }
+        {
+          name: 'FUNCTIONS_WORKER_RUNTIME'
+          value: runtime
+        }
+        {
+          name: 'StorageAccountConnectionString'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
+        }
+        {
+          name: 'CognitiveServicesEndpoint'
+          value: cognitiveServices.properties.endpoint
+        }
+        {
+          name: 'CognitiveServicesKey'
+          value: cognitiveServices.listKeys().key1
+        }
+        {
+          name: 'GoogleEmail'
+          value: googleEmail
+        }
+        {
+          name: 'GooglePassword'
+          value: googlePassword
+        }
+      ]
+      ftpsState: 'Disabled'
+      minTlsVersion: '1.2'
+      cors: {
+        allowedOrigins: [
+          'https://yusuf.zerdazi.com'
+          'http://localhost:5173'
+        ]
+        supportCredentials: false
       }
-      {
-        name: 'CognitiveServicesEndpoint'
-        value: cognitiveServices.properties.endpoint
-      }
-      {
-        name: 'CognitiveServicesKey'
-        value: cognitiveServices.listKeys().key1
-      }
-      {
-        name: 'GoogleEmail'
-        value: googleEmail
-      }
-      {
-        name: 'GooglePassword'
-        value: googlePassword
-      }
-    ]
+    }
+    httpsOnly: true
+  }
+  identity: {
+    type: 'SystemAssigned'
   }
 }
 
 // Outputs
-output functionAppUrl string = 'https://${functionApp.outputs.defaultHostName}'
+output functionAppUrl string = 'https://${functionApp.properties.defaultHostName}'
 output storageAccountName string = storageAccountName
 output cognitiveServicesEndpoint string = cognitiveServices.properties.endpoint 
