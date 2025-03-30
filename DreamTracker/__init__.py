@@ -9,13 +9,15 @@ from azure.ai.textanalytics import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 
-proxy = 'http://pi.zerdazi.com:8118'
+# Proxy configuration - comment out if not needed
+# proxy = 'http://pi.zerdazi.com:8118'
 
-os.environ['http_proxy'] = proxy
-os.environ['HTTP_PROXY'] = proxy
-os.environ['https_proxy'] = proxy
-os.environ['HTTPS_PROXY'] = proxy
+# os.environ['http_proxy'] = proxy
+# os.environ['HTTP_PROXY'] = proxy
+# os.environ['https_proxy'] = proxy
+# os.environ['HTTPS_PROXY'] = proxy
 
+# Environment variables
 GOOGLE_EMAIL = os.getenv('GoogleEmail')
 GOOGLE_PASSWORD = os.getenv('GooglePassword')
 STORAGE = os.getenv('StorageAccountConnectionString')
@@ -88,7 +90,11 @@ def main(mytimer: func.TimerRequest) -> None:
     dreams = keep.find(labels=[keep.findLabel("Dream")])
 
     new_dreams = [dream for dream in dreams if dream.id not in existing_dream_ids]
-    logging.info(str(len(new_dreams)) + " new dreams found.")
+    logging.info(f"{len(new_dreams)} new dreams found.")
+
+    if not new_dreams:
+        logging.info("No new dreams to process.")
+        return
 
     cog_dreams = batch([{"id": dream.id, "text": dream.text} for dream in new_dreams], 5)
     cog_result_sentiment = []

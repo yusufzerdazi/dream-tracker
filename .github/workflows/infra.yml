@@ -1,0 +1,72 @@
+name: Deploy Azure Infrastructure with Bicep
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+      resourceGroupName:
+        description: 'Resource Group Name'
+        required: true
+        default: 'rg-dreamtracker-dev'
+        type: string
+      location:
+        description: 'Azure Region'
+        required: true
+        default: 'eastus'
+        type: string
+
+jobs:
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout GitHub Action'
+        uses: actions/checkout@v4
+
+      - name: 'Login to Azure'
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: 'Create Resource Group if it doesn''t exist'
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            if [ $(az group exists --name ${{ github.event.inputs.resourceGroupName }}) = false ]; then
+              az group create --name ${{ github.event.inputs.resourceGroupName }} --location ${{ github.event.inputs.location }}
+            fi
+
+      - name: 'Deploy Azure Infrastructure with Bicep'
+        uses: azure/arm-deploy@v1
+        with:
+          scope: 'resourcegroup'
+          resourceGroupName: ${{ github.event.inputs.resourceGroupName }}
+          template: './bicep/main.bicep'
+          deploymentName: 'dreamtracker-${{ github.event.inputs.environment }}-${{ github.run_number }}'
+          parameters: >
+            appName=dreamtracker-${{ github.event.inputs.environment }}
+            location=${{ github.event.inputs.location }}
+
+      - name: 'Get Function App Publish Profile'
+        uses: azure/CLI@v1
+        id: get-publish-profile
+        with:
+          inlineScript: |
+            FUNCTION_APP_NAME=$(az functionapp list --resource-group ${{ github.event.inputs.resourceGroupName }} --query "[0].name" --output tsv)
+            echo "::set-output name=functionAppName::$FUNCTION_APP_NAME"
+            PUBLISH_PROFILE=$(az functionapp deployment list-publishing-profiles --name $FUNCTION_APP_NAME --resource-group ${{ github.event.inputs.resourceGroupName }} --xml)
+            echo "::add-mask::$PUBLISH_PROFILE"
+            echo "::set-output name=publishProfile::$PUBLISH_PROFILE"
+
+      - name: 'Save Publish Profile as GitHub Secret'
+        uses: Azure/appservice-settings@v1
+        with:
+          app-name: ${{ steps.get-publish-profile.outputs.functionAppName }}
+          app-settings-json: '[{ "name": "AZURE_FUNCTIONAPP_PUBLISH_PROFILE", "value": "${{ steps.get-publish-profile.outputs.publishProfile }}" }]' 
