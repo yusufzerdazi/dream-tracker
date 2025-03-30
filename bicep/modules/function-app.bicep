@@ -22,6 +22,12 @@ param pythonVersion string = '3.11'
 @description('Function app settings')
 param appSettings array = []
 
+@description('CORS allowed origins')
+param corsAllowedOrigins array = [
+  'https://yusuf.zerdazi.com'
+  'http://localhost:5173'
+]
+
 resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
   name: functionAppName
   location: location
@@ -61,6 +67,10 @@ resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
       ], appSettings)
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
+      cors: {
+        allowedOrigins: corsAllowedOrigins
+        supportCredentials: false
+      }
     }
     httpsOnly: true
   }

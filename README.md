@@ -7,6 +7,14 @@ A serverless Azure Functions application that retrieves dream notes from Google 
 - 🌙 Daily retrieval of dreams from Google Keep
 - 🧠 AI-powered sentiment analysis, key phrase extraction, and entity recognition
 - 💾 Persistent storage in Azure Blob Storage
+- 📊 Dream summary statistics accessible via API endpoint
+- 🔄 CORS support for frontend integration
+
+## API Endpoints
+
+- `GET /api/summary` - Get dream summary statistics organized by date
+  - Allowed origins: `https://yusuf.zerdazi.com` and `http://localhost:5173`
+  - Returns JSON with summary metrics including sentiment analysis, entity counts and key phrases
 
 ## Architecture
 
@@ -60,6 +68,8 @@ A serverless Azure Functions application that retrieves dream notes from Google 
 
 1. Create GitHub repository secrets:
    - `AZURE_CREDENTIALS`: Azure service principal credentials in JSON format
+   - `GOOGLEEMAIL`: Your Google email for accessing Google Keep
+   - `GOOGLEPASSWORD`: Your Google app password
 
 2. Run the "Deploy Azure Infrastructure with Bicep" GitHub Actions workflow manually with your desired environment parameters.
 
@@ -67,9 +77,6 @@ A serverless Azure Functions application that retrieves dream notes from Google 
 
 1. Create GitHub repository secrets:
    - `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`: Azure Function App publish profile
-   - Add application settings in the Azure portal:
-     - `GoogleEmail`: Your Google email
-     - `GooglePassword`: Your Google app password
 
 2. Push your changes to the main branch or manually trigger the "Deploy DreamTracker to Azure Functions" workflow.
 
