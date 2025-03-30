@@ -13,6 +13,9 @@ def get_last_run_date(container_client) -> Optional[datetime.datetime]:
     """Get the last run date from the summary metadata blob if it exists."""
     try:
         summary_metadata_blob = container_client.get_blob_client("summary_metadata.json")
+        if not blob_exists(summary_metadata_blob):
+            return None
+            
         metadata_content = summary_metadata_blob.download_blob().readall()
         metadata = json.loads(metadata_content)
         return datetime.datetime.fromisoformat(metadata.get("last_run_date"))
@@ -20,17 +23,34 @@ def get_last_run_date(container_client) -> Optional[datetime.datetime]:
         logging.info(f"No previous summary metadata found or error: {str(e)}")
         return None
 
+def blob_exists(blob_client) -> bool:
+    """Check if a blob exists without downloading it."""
+    try:
+        blob_client.get_blob_properties()
+        return True
+    except Exception:
+        return False
+
 def update_last_run_date(container_client):
     """Update the last run date in the summary metadata blob."""
-    summary_metadata_blob = container_client.get_blob_client("summary_metadata.json")
-    metadata = {"last_run_date": datetime.datetime.now().isoformat()}
-    summary_metadata_blob.upload_blob(json.dumps(metadata), overwrite=True)
+    try:
+        summary_metadata_blob = container_client.get_blob_client("summary_metadata.json")
+        metadata = {"last_run_date": datetime.datetime.now().isoformat()}
+        summary_metadata_blob.upload_blob(json.dumps(metadata), overwrite=True)
+    except Exception as e:
+        logging.error(f"Error updating last run date: {str(e)}")
 
 def load_dream_data(container_client, last_run_date: Optional[datetime.datetime] = None) -> List[Dict]:
     """Load all dream data or only new dreams since last run."""
     dream_data = []
+    has_dreams = False
     
     for blob in container_client.list_blobs():
+        print(blob.name)
+        # Detect if we have any dream files at all
+        if blob.name.endswith('.json') and blob.name != "summary.json" and blob.name != "summary_metadata.json":
+            has_dreams = True
+            
         # Skip non-dream files
         if not blob.name.endswith('.json') or blob.name == "summary.json" or blob.name == "summary_metadata.json":
             continue
@@ -46,7 +66,7 @@ def load_dream_data(container_client, last_run_date: Optional[datetime.datetime]
         dream = json.loads(dream_content)
         dream_data.append(dream)
     
-    return dream_data
+    return dream_data, has_dreams
 
 def generate_summary(dreams: List[Dict]) -> Dict:
     """Generate summary statistics from dream data."""
@@ -115,18 +135,13 @@ def generate_or_update_summary(container_client) -> Dict:
         last_run_date = get_last_run_date(container_client)
         
         # Load dream data (only new dreams if we have a last run date)
-        dream_data = load_dream_data(container_client, last_run_date)
+        dream_data, has_dreams = load_dream_data(container_client, last_run_date)
         
         if not dream_data and last_run_date:
             # No new dreams since last run, load the existing summary
-            try:
-                summary_blob = container_client.get_blob_client("summary.json")
-                existing_summary = json.loads(summary_blob.download_blob().readall())
-                return existing_summary
-            except Exception as e:
-                logging.warning(f"Error loading existing summary: {str(e)}")
-                # If we can't load existing summary, process all dreams
-                dream_data = load_dream_data(container_client)
+            summary_blob = container_client.get_blob_client("summary.json")
+            existing_summary = json.loads(summary_blob.download_blob().readall())
+            return existing_summary
         
         # Generate new summary if we have dreams to process
         if dream_data:
@@ -134,17 +149,14 @@ def generate_or_update_summary(container_client) -> Dict:
             
             # If we have an existing summary, merge the new data
             if last_run_date:
-                try:
-                    summary_blob = container_client.get_blob_client("summary.json")
-                    existing_summary = json.loads(summary_blob.download_blob().readall())
-                    
-                    # Merge summaries (new data overrides old data for same dates)
-                    for date, data in new_summary.items():
-                        existing_summary[date] = data
-                    
-                    new_summary = existing_summary
-                except Exception as e:
-                    logging.warning(f"Error merging with existing summary: {str(e)}")
+                summary_blob = container_client.get_blob_client("summary.json")
+                existing_summary = json.loads(summary_blob.download_blob().readall())
+                
+                # Merge summaries (new data overrides old data for same dates)
+                for date, data in new_summary.items():
+                    existing_summary[date] = data
+                
+                new_summary = existing_summary
             
             # Save the summary
             summary_blob = container_client.get_blob_client("summary.json")
@@ -161,59 +173,53 @@ def generate_or_update_summary(container_client) -> Dict:
         logging.error(f"Error generating summary: {str(e)}")
         return {"error": str(e)}
 
-def main(mytimer: func.TimerRequest, req: func.HttpRequest = None) -> func.HttpResponse:
-    """Function entry point - handles both timer and HTTP triggers."""
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    """Function entry point - handles HTTP trigger."""
     # Get storage connection
     storage_connection = os.getenv('StorageAccountConnectionString')
-    blob_service_client = BlobServiceClient.from_connection_string(storage_connection)
-    container_client = blob_service_client.get_container_client("dreams")
+    if not storage_connection:
+        return func.HttpResponse(
+            body=json.dumps({"error": "Storage connection string not set"}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+    # Set CORS headers
+    headers = {
+        "Access-Control-Allow-Origin": "https://yusuf.zerdazi.com,http://localhost:5173,https://portal.azure.com",
+        "Access-Control-Allow-Methods": "GET",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
     
-    # If triggered by HTTP request
-    if req:
-        logging.info('Processing HTTP request for dream summary')
+    # Handle OPTIONS request (CORS preflight)
+    if req.method == "OPTIONS":
+        return func.HttpResponse(status_code=200, headers=headers)
+    
+    try:
+        # Connect to storage
+        blob_service_client = BlobServiceClient.from_connection_string(storage_connection)
+        container_client = blob_service_client.get_container_client("dreams")
         
-        # Set CORS headers
-        headers = {
-            "Access-Control-Allow-Origin": "https://yusuf.zerdazi.com,http://localhost:5173",
-            "Access-Control-Allow-Methods": "GET",
-            "Access-Control-Allow-Headers": "Content-Type",
-        }
-        
-        # Handle OPTIONS request (CORS preflight)
-        if req.method == "OPTIONS":
-            return func.HttpResponse(status_code=200, headers=headers)
-        
+        # Try to get existing summary or generate a new one
         try:
-            # Try to get existing summary first for faster response
-            try:
-                summary_blob = container_client.get_blob_client("summary.json")
+            summary_blob = container_client.get_blob_client("summary.json")
+            if blob_exists(summary_blob):
                 summary = json.loads(summary_blob.download_blob().readall())
-            except Exception:
-                # If no summary exists, generate it
+            else:
                 summary = generate_or_update_summary(container_client)
-                
-            return func.HttpResponse(
-                body=json.dumps(summary),
-                mimetype="application/json",
-                headers=headers
-            )
-        except Exception as e:
-            return func.HttpResponse(
-                body=json.dumps({"error": str(e)}),
-                status_code=500,
-                mimetype="application/json",
-                headers=headers
-            )
-    # If triggered by timer
-    else:
-        logging.info('Python timer trigger function executed.')
+        except Exception:
+            summary = generate_or_update_summary(container_client)
         
-        # Skip if timer hasn't actually elapsed (for testing)
-        if mytimer.past_due:
-            logging.info('Timer is past due!')
-            
-        # Generate or update the summary
-        summary = generate_or_update_summary(container_client)
-        logging.info(f"Summary generated with {len(summary)} date entries")
-        
-        return None 
+        return func.HttpResponse(
+            body=json.dumps(summary),
+            mimetype="application/json",
+            headers=headers
+        )
+    except Exception as e:
+        logging.error(f"Error: {str(e)}")
+        return func.HttpResponse(
+            body=json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json",
+            headers=headers
+        ) 

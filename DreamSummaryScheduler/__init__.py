@@ -14,9 +14,21 @@ def main(mytimer: func.TimerRequest) -> None:
         
     # Get storage connection
     storage_connection = os.getenv('StorageAccountConnectionString')
-    blob_service_client = BlobServiceClient.from_connection_string(storage_connection)
-    container_client = blob_service_client.get_container_client("dreams")
+    if not storage_connection:
+        logging.error("StorageAccountConnectionString environment variable is not set")
+        return
     
-    # Generate or update the summary
-    summary = generate_or_update_summary(container_client)
-    logging.info(f"Summary generated with {len(summary)} date entries") 
+    try:
+        # Connect to storage
+        blob_service_client = BlobServiceClient.from_connection_string(storage_connection)
+        container_client = blob_service_client.get_container_client("dreams")
+        
+        # Generate or update the summary
+        summary = generate_or_update_summary(container_client)
+        if isinstance(summary, dict) and len(summary) > 0:
+            logging.info(f"Summary generated with {len(summary)} date entries")
+        else:
+            logging.info("Summary generated but no entries found")
+            
+    except Exception as e:
+        logging.error(f"Error in DreamSummaryScheduler: {str(e)}") 
