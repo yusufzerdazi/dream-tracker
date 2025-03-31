@@ -29,7 +29,7 @@ def setup():
     global keep, text_analytics_client, container_client
 
     keep = gkeepapi.Keep()
-    keep.login(GOOGLE_EMAIL, GOOGLE_PASSWORD)
+    keep.authenticate(GOOGLE_EMAIL, GOOGLE_PASSWORD)
     ta_credential = AzureKeyCredential(COG_KEY)
     text_analytics_client = TextAnalyticsClient(
             endpoint=COG_ENDPOINT, 
