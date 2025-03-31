@@ -9,20 +9,6 @@ from typing import Dict, List, Optional, Union
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient
 
-def get_last_run_date(container_client) -> Optional[datetime.datetime]:
-    """Get the last run date from the summary metadata blob if it exists."""
-    try:
-        summary_metadata_blob = container_client.get_blob_client("summary_metadata.json")
-        if not blob_exists(summary_metadata_blob):
-            return None
-            
-        metadata_content = summary_metadata_blob.download_blob().readall()
-        metadata = json.loads(metadata_content)
-        return datetime.datetime.fromisoformat(metadata.get("last_run_date"))
-    except Exception as e:
-        logging.info(f"No previous summary metadata found or error: {str(e)}")
-        return None
-
 def blob_exists(blob_client) -> bool:
     """Check if a blob exists without downloading it."""
     try:
@@ -31,22 +17,12 @@ def blob_exists(blob_client) -> bool:
     except Exception:
         return False
 
-def update_last_run_date(container_client):
-    """Update the last run date in the summary metadata blob."""
-    try:
-        summary_metadata_blob = container_client.get_blob_client("summary_metadata.json")
-        metadata = {"last_run_date": datetime.datetime.now().isoformat()}
-        summary_metadata_blob.upload_blob(json.dumps(metadata), overwrite=True)
-    except Exception as e:
-        logging.error(f"Error updating last run date: {str(e)}")
-
-def load_dream_data(container_client, last_run_date: Optional[datetime.datetime] = None) -> List[Dict]:
-    """Load all dream data or only new dreams since last run."""
+def load_dream_data(container_client) -> List[Dict]:
+    """Load all dream data."""
     dream_data = []
     has_dreams = False
     
     for blob in container_client.list_blobs():
-        print(blob.name)
         # Detect if we have any dream files at all
         if blob.name.endswith('.json') and blob.name != "summary.json" and blob.name != "summary_metadata.json":
             has_dreams = True
@@ -54,12 +30,6 @@ def load_dream_data(container_client, last_run_date: Optional[datetime.datetime]
         # Skip non-dream files
         if not blob.name.endswith('.json') or blob.name == "summary.json" or blob.name == "summary_metadata.json":
             continue
-            
-        # Check if we need to process this dream based on last run date
-        if last_run_date is not None:
-            # Convert blob last_modified to datetime for comparison
-            if blob.last_modified.replace(tzinfo=None) <= last_run_date:
-                continue
                 
         blob_client = container_client.get_blob_client(blob.name)
         dream_content = blob_client.download_blob().readall()
@@ -90,6 +60,8 @@ def generate_summary(dreams: List[Dict]) -> Dict:
         # Entity and key phrase counts
         all_entities = []
         all_key_phrases = []
+        all_tags = []
+        
         for dream in daily_dreams:
             entities = dream.get("entities", [])
             if entities:
@@ -99,14 +71,25 @@ def generate_summary(dreams: List[Dict]) -> Dict:
             key_phrases = dream.get("key_phrases", ([], None))[0]
             if key_phrases:
                 all_key_phrases.extend(key_phrases)
+                
+            # Collect all tags/labels from dreams
+            labels = dream.get("labels", [])
+            if labels:
+                all_tags.extend(labels)
         
         # Entity frequency
         entity_freq = defaultdict(int)
         for entity in all_entities:
             entity_freq[entity] += 1
         
-        # Top entities
+        # Tag frequency
+        tag_freq = defaultdict(int)
+        for tag in all_tags:
+            tag_freq[tag] += 1
+        
+        # Top entities and tags
         top_entities = sorted(entity_freq.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_tags = sorted(tag_freq.items(), key=lambda x: x[1], reverse=True)[:10]
         
         # Date summary
         summary[date] = {
@@ -120,6 +103,10 @@ def generate_summary(dreams: List[Dict]) -> Dict:
                 "count": len(all_entities),
                 "top_entities": dict(top_entities)
             },
+            "tags": {
+                "count": len(all_tags),
+                "top_tags": dict(top_tags)
+            },
             "key_phrases": {
                 "count": len(all_key_phrases),
                 "sample": all_key_phrases[:10] if all_key_phrases else []
@@ -128,46 +115,40 @@ def generate_summary(dreams: List[Dict]) -> Dict:
     
     return summary
 
-def generate_or_update_summary(container_client) -> Dict:
-    """Generate a new summary or update the existing one."""
+def generate_summary_from_all_dreams(container_client) -> Dict:
+    """Generate a new summary from all dreams."""
     try:
-        # Get the last run date
-        last_run_date = get_last_run_date(container_client)
+        # Check if summary already exists and is fresh (less than 24 hours old)
+        summary_blob = container_client.get_blob_client("summary.json")
+        if blob_exists(summary_blob):
+            # Get the last modified time of the summary blob
+            properties = summary_blob.get_blob_properties()
+            last_modified = properties.last_modified
+            
+            # Calculate time difference
+            time_difference = datetime.datetime.now(datetime.timezone.utc) - last_modified
+            
+            # If the summary is less than 24 hours old, return it directly
+            if time_difference.total_seconds() < 24 * 60 * 60:  # 24 hours in seconds
+                logging.info(f"Using existing summary that was updated {time_difference.total_seconds() / 3600:.2f} hours ago")
+                summary_content = summary_blob.download_blob().readall()
+                return json.loads(summary_content)
+            else:
+                logging.info(f"Summary is {time_difference.total_seconds() / 3600:.2f} hours old - regenerating")
         
-        # Load dream data (only new dreams if we have a last run date)
-        dream_data, has_dreams = load_dream_data(container_client, last_run_date)
+        # Load all dream data
+        dream_data, has_dreams = load_dream_data(container_client)
         
-        if not dream_data and last_run_date:
-            # No new dreams since last run, load the existing summary
-            summary_blob = container_client.get_blob_client("summary.json")
-            existing_summary = json.loads(summary_blob.download_blob().readall())
-            return existing_summary
-        
-        # Generate new summary if we have dreams to process
-        if dream_data:
-            new_summary = generate_summary(dream_data)
-            
-            # If we have an existing summary, merge the new data
-            if last_run_date:
-                summary_blob = container_client.get_blob_client("summary.json")
-                existing_summary = json.loads(summary_blob.download_blob().readall())
-                
-                # Merge summaries (new data overrides old data for same dates)
-                for date, data in new_summary.items():
-                    existing_summary[date] = data
-                
-                new_summary = existing_summary
-            
-            # Save the summary
-            summary_blob = container_client.get_blob_client("summary.json")
-            summary_blob.upload_blob(json.dumps(new_summary), overwrite=True)
-            
-            # Update the last run date
-            update_last_run_date(container_client)
-            
-            return new_summary
-        else:
+        if not dream_data:
             return {"message": "No dreams to analyze"}
+        
+        # Generate new summary
+        summary = generate_summary(dream_data)
+        
+        # Save the summary
+        summary_blob.upload_blob(json.dumps(summary), overwrite=True)
+        
+        return summary
             
     except Exception as e:
         logging.error(f"Error generating summary: {str(e)}")
@@ -184,6 +165,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
+    # Load excluded tag categories from environment variables
+    excluded_tags = os.getenv('EXCLUDED_TAGS', '')
+    excluded_tags_list = [tag.strip().lower() for tag in excluded_tags.split(',') if tag.strip()]
+    logging.info(f"Excluding tags: {excluded_tags_list}")
+
     # Set CORS headers
     headers = {
         "Access-Control-Allow-Origin": "https://yusuf.zerdazi.com,http://localhost:5173,https://portal.azure.com",
@@ -196,22 +182,83 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(status_code=200, headers=headers)
     
     try:
+        # Check for force refresh parameter
+        force_refresh = req.params.get('force') == 'true'
+        
         # Connect to storage
         blob_service_client = BlobServiceClient.from_connection_string(storage_connection)
         container_client = blob_service_client.get_container_client("dreams")
         
-        # Try to get existing summary or generate a new one
-        try:
+        # Check if summary exists and is fresh (unless force refresh is requested)
+        if not force_refresh:
             summary_blob = container_client.get_blob_client("summary.json")
             if blob_exists(summary_blob):
-                summary = json.loads(summary_blob.download_blob().readall())
-            else:
-                summary = generate_or_update_summary(container_client)
-        except Exception:
-            summary = generate_or_update_summary(container_client)
+                # Get the summary directly
+                summary_content = summary_blob.download_blob().readall()
+                summary = json.loads(summary_content)
+                
+                # Include cache info in the response
+                properties = summary_blob.get_blob_properties()
+                last_modified = properties.last_modified
+                time_difference = datetime.datetime.now(datetime.timezone.utc) - last_modified
+                summary["_metadata"] = {
+                    "last_updated": last_modified.isoformat(),
+                    "age_hours": round(time_difference.total_seconds() / 3600, 2)
+                }
+                
+                # Filter summary to include tags but exclude sensitive ones
+                filtered_summary = {}
+                for date, data in summary.items():
+                    if date == "_metadata":
+                        filtered_summary[date] = data
+                        continue
+                        
+                    filtered_summary[date] = {
+                        "dream_count": data.get("dream_count", 0),
+                        "sentiment": data.get("sentiment", {})
+                    }
+                    
+                    # Include tags but filter out sensitive ones
+                    if "tags" in data and "top_tags" in data["tags"]:
+                        filtered_tags = {k: v for k, v in data["tags"]["top_tags"].items()
+                                      if k.lower() not in excluded_tags_list}
+                        filtered_summary[date]["tags"] = {
+                            "count": data["tags"].get("count", 0),
+                            "top_tags": filtered_tags
+                        }
+                
+                return func.HttpResponse(
+                    body=json.dumps(filtered_summary),
+                    mimetype="application/json",
+                    headers=headers
+                )
+        
+        # Generate or regenerate summary
+        summary = generate_summary_from_all_dreams(container_client)
+        
+        # Filter summary to include tags but exclude sensitive ones
+        filtered_summary = {}
+        for date, data in summary.items():
+            if date == "_metadata" or date == "message" or date == "error":
+                filtered_summary[date] = data
+                continue
+                
+            filtered_summary[date] = {
+                "dream_count": data.get("dream_count", 0),
+                "sentiment": data.get("sentiment", {})
+            }
+            
+            # Include tags but filter out sensitive ones
+            if "tags" in data and "top_tags" in data["tags"]:
+                filtered_tags = {k: v for k, v in data["tags"]["top_tags"].items()
+                              if k.lower() not in excluded_tags_list}
+                filtered_summary[date]["tags"] = {
+                    "count": data["tags"].get("count", 0),
+                    "top_tags": filtered_tags
+                }
         
         return func.HttpResponse(
-            body=json.dumps(summary),
+            body=json.dumps(filtered_summary),
             mimetype="application/json",
             headers=headers
         )

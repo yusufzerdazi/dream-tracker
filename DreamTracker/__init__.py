@@ -8,6 +8,7 @@ import gkeepapi
 from azure.ai.textanalytics import TextAnalyticsClient
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
+from openai import OpenAI
 
 # Proxy configuration - comment out if not needed
 # proxy = 'http://pi.zerdazi.com:8118'
@@ -26,7 +27,7 @@ COG_KEY = os.getenv('CognitiveServicesKey')
 
 
 def setup():
-    global keep, text_analytics_client, container_client
+    global keep, text_analytics_client, container_client, openai_client
 
     keep = gkeepapi.Keep()
     keep.authenticate(GOOGLE_EMAIL, GOOGLE_PASSWORD)
@@ -36,6 +37,7 @@ def setup():
             credential=ta_credential)
     blob_service_client = BlobServiceClient.from_connection_string(STORAGE)
     container_client = blob_service_client.get_container_client("dreams")
+    openai_client = OpenAI()
 
 def parse_dream(keep_dream):
     return {
@@ -77,8 +79,76 @@ def batch(iterable, n=1):
     for ndx in range(0, l, n):
         yield iterable[ndx:min(ndx + n, l)]
 
+def generate_dream_metadata(dream_text):
+    """Generate title and tags for a dream using a single OpenAI call."""
+    try:
+        # Load prompt template from environment variable with fallback to a basic template
+        prompt_template = os.getenv('DREAM_ANALYZER_PROMPT')
+        
+        # Format the prompt with the dream text
+        prompt = prompt_template.format(dream_text=dream_text)
+        
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a dream analyzer that creates meaningful titles and tags for dreams."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=150
+        )
+        
+        # Extract and parse the JSON response
+        content = response.choices[0].message.content.strip()
+        metadata = json.loads(content)
+        
+        # Validate the response
+        if "title" not in metadata or "tags" not in metadata:
+            logging.warning(f"Invalid metadata format received: {content}")
+            return {"title": "Untitled Dream", "tags": []}
+            
+        if not isinstance(metadata["tags"], list):
+            metadata["tags"] = []
+            
+        return metadata
+    except Exception as e:
+        logging.error(f"Error generating dream metadata: {str(e)}")
+        return {"title": "Untitled Dream", "tags": []}
+
+def update_keep_with_tags(dream, new_tags, ai_title):
+    """Update Google Keep note with new tags, format title, and set color."""
+    try:
+        # Format the title with date prefix "DD/MM/YYYY: <dream title>"
+        created_date = dream.timestamps.created
+        date_prefix = created_date.strftime("%d/%m/%Y")
+        
+        # Use the provided AI title
+        new_title = f"{date_prefix}: {ai_title}"
+        dream.title = new_title
+            
+        # Set note color to yellow
+        dream.color = gkeepapi.node.ColorValue.Yellow
+        
+        # Add new tags to the dream note
+        for tag in new_tags:
+            # Find or create label
+            label = keep.findLabel(tag)
+            if not label:
+                label = keep.createLabel(tag)
+            
+            # Add label to note if it doesn't already have it
+            if label not in dream.labels.all():
+                dream.labels.add(label)
+        
+        # Sync changes back to Google Keep
+        keep.sync()
+        return True
+    except Exception as e:
+        logging.error(f"Error updating Keep note: {str(e)}")
+        return False
+
 def main(mytimer: func.TimerRequest) -> None:
-    global keep, text_analytics_client, container_client
+    global keep, text_analytics_client, container_client, openai_client
 
     logging.info("Function triggered.")
     setup()
@@ -86,10 +156,11 @@ def main(mytimer: func.TimerRequest) -> None:
     logging.info("Fetching existing dreams.")
     existing_dream_ids = [os.path.splitext(blob.name)[0] for blob in container_client.list_blobs()]
 
-    logging.info("Fetching new dreams.")
-    dreams = keep.find(labels=[keep.findLabel("Dream")])
-
-    new_dreams = [dream for dream in dreams if dream.id not in existing_dream_ids]
+    logging.info("Fetching all dreams.")
+    all_dreams = keep.find(labels=[keep.findLabel("Dream")])
+    
+    # Process new dreams only - don't modify existing dreams
+    new_dreams = [dream for dream in all_dreams if dream.id not in existing_dream_ids]
     logging.info(f"{len(new_dreams)} new dreams found.")
 
     if not new_dreams:
@@ -113,6 +184,22 @@ def main(mytimer: func.TimerRequest) -> None:
         sentiment = parse_sentiment([d for d in cog_result_sentiment if d.id == dream.id][0])
         key_phrases = parse_key_phrases([d for d in cog_result_key_phrases if d.id == dream.id][0])
         entities = parse_entities([d for d in cog_result_entities if d.id == dream.id][0])
+
+        # Generate metadata (title and tags) with a single OpenAI call
+        dream_metadata = generate_dream_metadata(dream.text)
+        ai_title = dream_metadata["title"]
+        new_tags = dream_metadata["tags"]
+        logging.info(f"Generated metadata for dream {dream.id}: title='{ai_title}', tags={new_tags}")
+        
+        # Update Google Keep note with the AI-generated title, tags, and color
+        update_success = update_keep_with_tags(dream, new_tags, ai_title)
+        if update_success:
+            logging.info(f"Successfully updated dream {dream.id} with AI metadata and formatting")
+            # Update the parsed_dream with the new labels and title
+            parsed_dream["labels"] = [label.name for label in dream.labels.all()]
+            parsed_dream["title"] = dream.title
+        else:
+            logging.warning(f"Failed to update dream {dream.id} with AI metadata and formatting")
 
         parsed_dream["sentiment"] = sentiment
         parsed_dream["key_phrases"] = key_phrases,

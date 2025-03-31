@@ -2,7 +2,7 @@ import logging
 import os
 import azure.functions as func
 from azure.storage.blob import BlobServiceClient
-from DreamSummary import generate_or_update_summary
+from DreamSummary import generate_summary_from_all_dreams
 
 def main(mytimer: func.TimerRequest) -> None:
     """Timer trigger function for generating dream summaries on schedule."""
@@ -23,8 +23,8 @@ def main(mytimer: func.TimerRequest) -> None:
         blob_service_client = BlobServiceClient.from_connection_string(storage_connection)
         container_client = blob_service_client.get_container_client("dreams")
         
-        # Generate or update the summary
-        summary = generate_or_update_summary(container_client)
+        # Generate the summary from all dreams
+        summary = generate_summary_from_all_dreams(container_client)
         if isinstance(summary, dict) and len(summary) > 0:
             logging.info(f"Summary generated with {len(summary)} date entries")
         else:

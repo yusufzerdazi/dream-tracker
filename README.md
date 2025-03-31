@@ -6,6 +6,7 @@ A serverless Azure Functions application that retrieves dream notes from Google 
 
 - 🌙 Daily retrieval of dreams from Google Keep
 - 🧠 AI-powered sentiment analysis, key phrase extraction, and entity recognition
+- 🏷️ Automatic dream tagging using OpenAI to categorize dreams
 - 💾 Persistent storage in Azure Blob Storage
 - 📊 Dream summary statistics accessible via API endpoint
 - 🔄 CORS support for frontend integration
@@ -14,13 +15,14 @@ A serverless Azure Functions application that retrieves dream notes from Google 
 
 - `GET /api/summary` - Get dream summary statistics organized by date
   - Allowed origins: `https://yusuf.zerdazi.com` and `http://localhost:5173`
-  - Returns JSON with summary metrics including sentiment analysis, entity counts and key phrases
+  - Returns JSON with summary metrics including sentiment analysis, entity counts, tags, and key phrases
 
 ## Architecture
 
 - **Azure Functions (Python)**: Serverless compute to run the daily dream analysis
 - **Azure Blob Storage**: For storing analyzed dream data
 - **Azure AI Text Analytics**: For analyzing dream content
+- **OpenAI API**: For generating relevant dream tags
 - **Azure Monitor**: For logging and monitoring
 - **GitHub Actions**: For CI/CD deployment
 
@@ -28,6 +30,7 @@ A serverless Azure Functions application that retrieves dream notes from Google 
 
 - Azure subscription
 - A Google account with Keep notes tagged with "Dream"
+- OpenAI API key
 - GitHub account (for deployment)
 
 ## Local Development
@@ -53,7 +56,8 @@ A serverless Azure Functions application that retrieves dream notes from Google 
        "GooglePassword": "your-app-password",
        "StorageAccountConnectionString": "your-storage-connection-string",
        "CognitiveServicesEndpoint": "your-cognitive-services-endpoint",
-       "CognitiveServicesKey": "your-cognitive-services-key"
+       "CognitiveServicesKey": "your-cognitive-services-key",
+       "OpenAIApiKey": "your-openai-api-key"
      }
    }
    ```
@@ -70,6 +74,7 @@ A serverless Azure Functions application that retrieves dream notes from Google 
    - `AZURE_CREDENTIALS`: Azure service principal credentials in JSON format
    - `GOOGLEEMAIL`: Your Google email for accessing Google Keep
    - `GOOGLEPASSWORD`: Your Google app password
+   - `OPENAI_API_KEY`: Your OpenAI API key
 
 2. Run the "Deploy Azure Infrastructure with Bicep" GitHub Actions workflow manually with your desired environment parameters.
 

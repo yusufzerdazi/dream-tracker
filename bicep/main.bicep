@@ -8,6 +8,10 @@ param googleEmail string
 @secure()
 param googlePassword string
 
+@description('The OpenAI API key.')
+@secure()
+param openaiKey string
+
 @description('Storage Account type')
 @allowed([
   'Standard_LRS'
@@ -30,6 +34,12 @@ param pythonVersion string = '3.11'
 
 @description('The SKU of App Service Plan')
 param sku string = 'Y1'
+
+@description('Comma-separated list of tag categories to exclude from public API data')
+param excludedTags string
+
+@description('Dream analyzer system prompt template')
+param dreamAnalyzerPrompt string
 
 var functionAppName = '${appName}functions'
 var hostingPlanName = appName
@@ -155,6 +165,18 @@ resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
         {
           name: 'GooglePassword'
           value: googlePassword
+        }
+        {
+          name: 'OPENAI_API_KEY'
+          value: openaiKey
+        }
+        {
+          name: 'EXCLUDED_TAGS'
+          value: excludedTags
+        }
+        {
+          name: 'DREAM_ANALYZER_PROMPT'
+          value: dreamAnalyzerPrompt
         }
       ]
       ftpsState: 'Disabled'
