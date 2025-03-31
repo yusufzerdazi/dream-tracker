@@ -38,7 +38,7 @@ jobs:
           resourceGroupName: dreamtracker
           template: './bicep/main.bicep'
           deploymentName: 'dreamtracker-${{ github.run_number }}'
-          parameters: |
+          parameters: >
             googleEmail=${{ secrets.GOOGLEEMAIL }}
             googlePassword=${{ secrets.GOOGLEPASSWORD }}
             openaiKey=${{ secrets.OPENAI_API_KEY }}
