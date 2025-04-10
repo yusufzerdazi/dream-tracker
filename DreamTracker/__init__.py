@@ -40,11 +40,15 @@ def setup():
     openai_client = OpenAI()
 
 def parse_dream(keep_dream):
+    # Use edited time if available, otherwise fall back to created time
+    last_modified = keep_dream.timestamps.edited if keep_dream.timestamps.edited else keep_dream.timestamps.created
+    
     return {
         "id": keep_dream.id,
         "title": keep_dream.title,
         "labels": [label.name for label in keep_dream.labels.all()],
         "timestamp": str(keep_dream.timestamps.created),
+        "lastModified": str(last_modified),
         "text": keep_dream.text
     }
 
@@ -147,17 +151,66 @@ def update_keep_with_tags(dream, new_tags, ai_title):
         logging.error(f"Error updating Keep note: {str(e)}")
         return False
 
+def sync_dreams_from_keep_to_blob(all_dreams):
+    """Synchronize dreams from Google Keep to Blob storage based on LastModified timestamps."""
+    logging.info("Starting synchronization from Keep to Blob storage.")
+    
+    # Get all dreams from Keep
+    logging.info(f"Found {len(all_dreams)} dreams in Keep.")
+    
+    # Get all blobs from storage
+    blobs = list(container_client.list_blobs())
+    blob_dict = {os.path.splitext(blob.name)[0]: blob for blob in blobs}
+    logging.info(f"Found {len(blob_dict)} dreams in Blob storage.")
+    
+    # Process each dream from Keep
+    for dream in all_dreams:
+        dream_id = dream.id
+        # Use edited time if available, otherwise fall back to created time
+        keep_last_modified = dream.timestamps.edited if dream.timestamps.edited else dream.timestamps.created
+        
+        # Check if dream exists in blob storage
+        if dream_id in blob_dict:
+            # Download the existing blob
+            blob_client = container_client.get_blob_client(blob_dict[dream_id].name)
+            blob_data = json.loads(blob_client.download_blob().readall().decode('utf-8'))
+            
+            # Get the last modified time from blob
+            blob_last_modified = blob_data.get("lastModified")
+            
+            # If blob doesn't have lastModified or Keep's lastModified is newer, update blob
+            if not blob_last_modified or keep_last_modified > datetime.datetime.fromisoformat(blob_last_modified):
+                logging.info(f"Updating dream {dream_id} in blob storage (Keep modified: {keep_last_modified})")
+                
+                # Update the blob data with current Keep data
+                blob_data["title"] = dream.title
+                blob_data["labels"] = [label.name for label in dream.labels.all()]
+                blob_data["text"] = dream.text
+                blob_data["lastModified"] = str(keep_last_modified)
+                
+                # Upload the updated data
+                blob_client.upload_blob(json.dumps(blob_data), overwrite=True)
+            else:
+                logging.info(f"Dream {dream_id} is up to date in blob storage")
+    
+    logging.info("Synchronization from Keep to Blob storage completed.")
+
 def main(mytimer: func.TimerRequest) -> None:
     global keep, text_analytics_client, container_client, openai_client
 
     logging.info("Function triggered.")
     setup()
 
-    logging.info("Fetching existing dreams.")
-    existing_dream_ids = [os.path.splitext(blob.name)[0] for blob in container_client.list_blobs()]
-
-    logging.info("Fetching all dreams.")
+    # Get all dreams from Keep once
+    logging.info("Fetching all dreams from Keep.")
     all_dreams = keep.find(labels=[keep.findLabel("Dream")])
+    logging.info(f"Found {len(all_dreams)} dreams in Keep.")
+
+    # First, synchronize existing dreams from Keep to Blob
+    sync_dreams_from_keep_to_blob(all_dreams)
+
+    logging.info("Fetching existing dreams from blob storage.")
+    existing_dream_ids = [os.path.splitext(blob.name)[0] for blob in container_client.list_blobs()]
     
     # Process new dreams only - don't modify existing dreams
     new_dreams = [dream for dream in all_dreams if dream.id not in existing_dream_ids]
