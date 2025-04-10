@@ -155,9 +155,6 @@ def sync_dreams_from_keep_to_blob(all_dreams):
     """Synchronize dreams from Google Keep to Blob storage based on LastModified timestamps."""
     logging.info("Starting synchronization from Keep to Blob storage.")
     
-    # Get all dreams from Keep
-    logging.info(f"Found {len(all_dreams)} dreams in Keep.")
-    
     # Get all blobs from storage
     blobs = list(container_client.list_blobs())
     blob_dict = {os.path.splitext(blob.name)[0]: blob for blob in blobs}
@@ -204,8 +201,7 @@ def main(mytimer: func.TimerRequest) -> None:
     # Get all dreams from Keep once
     logging.info("Fetching all dreams from Keep.")
     all_dreams = keep.find(labels=[keep.findLabel("Dream")])
-    logging.info(f"Found {len(all_dreams)} dreams in Keep.")
-
+    logging.info("Fetching existing dreams.")
     # First, synchronize existing dreams from Keep to Blob
     sync_dreams_from_keep_to_blob(all_dreams)
 
