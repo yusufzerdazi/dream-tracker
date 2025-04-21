@@ -200,7 +200,19 @@ def main(mytimer: func.TimerRequest) -> None:
 
     # Get all dreams from Keep once
     logging.info("Fetching all dreams from Keep.")
-    all_dreams = keep.find(labels=[keep.findLabel("Dream")])
+    dream_label = keep.findLabel("Dream")
+    if not dream_label:
+        logging.error("Could not find 'Dream' label in Google Keep!")
+        return
+    
+    logging.info(f"Found Dream label with ID: {dream_label.id}")
+    all_dreams = keep.find(labels=[dream_label])
+    logging.info(f"Found {len(all_dreams)} dreams in Keep")
+    
+    # Log details of each dream found
+    for dream in all_dreams:
+        logging.info(f"Dream ID: {dream.id}, Title: {dream.title}, Created: {dream.timestamps.created}, Modified: {dream.timestamps.edited}")
+    
     logging.info("Fetching existing dreams.")
     # First, synchronize existing dreams from Keep to Blob
     sync_dreams_from_keep_to_blob(all_dreams)
