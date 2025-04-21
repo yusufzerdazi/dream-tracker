@@ -206,7 +206,7 @@ def main(mytimer: func.TimerRequest) -> None:
         return
     
     logging.info(f"Found Dream label with ID: {dream_label.id}")
-    all_dreams = keep.find(labels=[dream_label])
+    all_dreams = [*keep.find(labels=[dream_label])]
     logging.info(f"Found {len(all_dreams)} dreams in Keep")
     
     # Log details of each dream found
