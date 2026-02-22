@@ -1,3 +1,5 @@
+extension microsoftGraph
+
 @description('The name of the function app that you wish to create.')
 param appName string = 'dreamtracker'
 
@@ -111,6 +113,24 @@ resource cognitiveServices 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
   }
 }
 
+resource voiceProcessorApp 'Microsoft.Graph/applications@v1.0' = {
+  uniqueName: 'DreamTracker-VoiceProcessor'
+  displayName: 'DreamTracker-VoiceProcessor'
+  signInAudience: 'PersonalMicrosoftAccount'
+  isFallbackPublicClient: true
+  requiredResourceAccess: [
+    {
+      resourceAppId: '00000003-0000-0000-c000-000000000000' // Microsoft Graph
+      resourceAccess: [
+        {
+          id: '10571f2a-5972-4b18-b3e5-5765e8847e36' // Files.Read (Delegated)
+          type: 'Scope'
+        }
+      ]
+    }
+  ]
+}
+
 resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
   name: functionAppName
   location: location
@@ -178,6 +198,14 @@ resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
           name: 'DREAM_ANALYZER_PROMPT'
           value: dreamAnalyzerPrompt
         }
+        {
+          name: 'MS_GRAPH_CLIENT_ID'
+          value: voiceProcessorApp.appId
+        }
+        {
+          name: 'MS_GRAPH_TENANT_ID'
+          value: 'consumers'
+        }
       ]
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
@@ -200,4 +228,5 @@ resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
 // Outputs
 output functionAppUrl string = 'https://${functionApp.properties.defaultHostName}'
 output storageAccountName string = storageAccountName
-output cognitiveServicesEndpoint string = cognitiveServices.properties.endpoint 
+output cognitiveServicesEndpoint string = cognitiveServices.properties.endpoint
+output msGraphClientId string = voiceProcessorApp.appId
