@@ -1,4 +1,4 @@
-extension microsoftGraph
+extension microsoftGraphV1
 
 @description('The name of the function app that you wish to create.')
 param appName string = 'dreamtracker'
