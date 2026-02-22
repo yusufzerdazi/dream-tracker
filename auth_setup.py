@@ -50,7 +50,8 @@ def main():
         sys.exit(1)
 
     authority = f'https://login.microsoftonline.com/{TENANT_ID}'
-    app = msal.PublicClientApplication(CLIENT_ID, authority=authority)
+    cache = msal.SerializableTokenCache()
+    app = msal.PublicClientApplication(CLIENT_ID, authority=authority, token_cache=cache)
 
     # Initiate device code flow
     flow = app.initiate_device_flow(scopes=SCOPES)
@@ -73,7 +74,7 @@ def main():
         container_client = blob_service_client.get_container_client("dreams")
         blob_client = container_client.get_blob_client(TOKEN_CACHE_BLOB)
 
-        cache_data = app.token_cache.serialize()
+        cache_data = cache.serialize()
         blob_client.upload_blob(cache_data, overwrite=True)
         print(f"Token cache saved to blob storage: {TOKEN_CACHE_BLOB}")
         print("VoiceDreamProcessor is now ready to use.")

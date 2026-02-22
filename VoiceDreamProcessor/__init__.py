@@ -142,9 +142,9 @@ def transcribe_audio(audio_data, filename, openai_client):
     return transcript.text
 
 
-def create_keep_note(keep, title, text):
-    """Create a Google Keep note with the Dream label."""
-    note = keep.createNote(title=title, text=text)
+def create_keep_note(keep, text):
+    """Create a Google Keep note with the Dream label. Title is set later by DreamTracker."""
+    note = keep.createNote(title='', text=text)
 
     # Find or create the Dream label
     dream_label = keep.findLabel('Dream')
@@ -153,7 +153,7 @@ def create_keep_note(keep, title, text):
 
     note.labels.add(dream_label)
     keep.sync()
-    logging.info(f"Created Keep note: '{title}'")
+    logging.info("Created Keep note for dream analysis.")
     return note
 
 
@@ -242,8 +242,7 @@ def main(mytimer: func.TimerRequest) -> None:
 
         # Create Keep note
         try:
-            title = os.path.splitext(filename)[0]
-            create_keep_note(keep, title, transcript)
+            create_keep_note(keep, transcript)
         except Exception as e:
             logging.error(f"Failed to create Keep note for {filename}: {e}")
             continue  # Transient — leave unprocessed for retry
