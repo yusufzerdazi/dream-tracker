@@ -123,7 +123,7 @@ resource voiceProcessorApp 'Microsoft.Graph/applications@v1.0' = {
       resourceAppId: '00000003-0000-0000-c000-000000000000' // Microsoft Graph
       resourceAccess: [
         {
-          id: '10571f2a-5972-4b18-b3e5-5765e8847e36' // Files.Read (Delegated)
+          id: '10465720-29dd-4523-a11a-6a75c743c9d9' // Files.Read (Delegated)
           type: 'Scope'
         }
       ]
