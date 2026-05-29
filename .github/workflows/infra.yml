@@ -43,7 +43,6 @@ jobs:
             googlePassword=${{ secrets.GOOGLEPASSWORD }}
             openaiKey=${{ secrets.OPENAI_API_KEY }}
             excludedTags=${{ vars.EXCLUDED_TAGS }}
-            dreamAnalyzerPrompt=${{ vars.DREAM_ANALYZER_PROMPT }}
 
       - name: 'Get Function App Publish Profile'
         uses: azure/CLI@v1

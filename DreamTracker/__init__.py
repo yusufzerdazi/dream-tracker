@@ -26,6 +26,81 @@ STORAGE = os.getenv('StorageAccountConnectionString')
 COG_ENDPOINT = os.getenv('CognitiveServicesEndpoint')
 COG_KEY = os.getenv('CognitiveServicesKey')
 
+# ---------------------------------------------------------------------------
+# Dream tag taxonomy and analyzer prompt — source of truth lives here, in git.
+# ---------------------------------------------------------------------------
+
+# The only tags the analyzer may assign. Enforced at the model layer via the
+# JSON schema enum below, and used to repair invalid/legacy tags. "Wet" and
+# "Sexual" are valid labels but are excluded from the public summary API
+# (see EXCLUDED_TAGS, consumed by DreamSummary).
+ALLOWED_TAGS = ["Inspiration", "Wet", "Lucid", "Sexual", "Nightmare"]
+
+# Prompt template; {dream_text} is substituted at call time.
+DREAM_ANALYZER_PROMPT = (
+    "Analyze the following dream and provide: "
+    "1. A short title (3-6 words) that captures the dream's essence. "
+    "2. Relevant tags from the following list of labels: "
+    "- Inspiration: The dream has a significant meaning which sticks with me "
+    "into the day. This could be an idea for a song, a game or something which "
+    "shifts my worldview. A very small percentage of dreams fall into this "
+    "category. "
+    "- Wet: I cum / ejaculate during the dream. If there's a phrase like "
+    "\"i cum\" add this. "
+    "- Lucid: I am aware that I am dreaming. "
+    "- Sexual: References sex. "
+    "- Nightmare: the dream is genuinely scary in a way which continues into "
+    "waking. "
+    "No other labels should be used, and only assign a tag when it genuinely "
+    "applies (the tags array may be empty). Note that a dream can be sexual "
+    "without being wet. "
+    "Dream text: <<<{dream_text}>>>"
+)
+
+# Strict structured-output schema. With strict=True plus the enum on tag items,
+# the model can only ever return the allowed tags in the required shape.
+DREAM_METADATA_SCHEMA = {
+    "name": "dream_metadata",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "A short 3-6 word title capturing the dream's essence",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string", "enum": ALLOWED_TAGS},
+                "description": "Applicable tags from the allowed list; empty if none apply",
+            },
+        },
+        "required": ["title", "tags"],
+        "additionalProperties": False,
+    },
+}
+
+
+def canonical_tag(name):
+    """Map a label name to its canonical allowed tag, or None if it isn't one.
+
+    Recognises exact matches (case-insensitive) and the common invalid form
+    with a trailing " Dream" (e.g. "Nightmare Dream" -> "Nightmare"). Labels
+    that aren't one of our managed tags — including the master "Dream" label
+    and any unrelated user labels — return None and are left untouched.
+    """
+    if not name:
+        return None
+    by_lower = {t.lower(): t for t in ALLOWED_TAGS}
+    key = name.strip().lower()
+    if key in by_lower:
+        return by_lower[key]
+    if key.endswith(" dream"):
+        stripped = key[:-len(" dream")].strip()
+        if stripped in by_lower:
+            return by_lower[stripped]
+    return None
+
 
 def setup():
     global keep, text_analytics_client, container_client, openai_client
@@ -114,37 +189,28 @@ def batch(iterable, n=1):
         yield iterable[ndx:min(ndx + n, l)]
 
 def generate_dream_metadata(dream_text):
-    """Generate title and tags for a dream using a single OpenAI call."""
+    """Generate a title and allowed tags for a dream via a single OpenAI call
+    using strict structured output (schema-enforced shape and tag enum)."""
     try:
-        # Load prompt template from environment variable with fallback to a basic template
-        prompt_template = os.getenv('DREAM_ANALYZER_PROMPT')
-        
-        # Format the prompt with the dream text
-        prompt = prompt_template.format(dream_text=dream_text)
-        
+        prompt = DREAM_ANALYZER_PROMPT.format(dream_text=dream_text)
+
         response = openai_client.chat.completions.create(
             model="gpt-5.4-mini",
             messages=[
                 {"role": "system", "content": "You are a dream analyzer that creates meaningful titles and tags for dreams."},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt},
             ],
-            response_format={"type": "json_object"},
-            max_tokens=150
+            response_format={"type": "json_schema", "json_schema": DREAM_METADATA_SCHEMA},
         )
-        
-        # Extract and parse the JSON response
+
         content = response.choices[0].message.content.strip()
         metadata = json.loads(content)
-        
-        # Validate the response
-        if "title" not in metadata or "tags" not in metadata:
-            logging.warning(f"Invalid metadata format received: {content}")
-            return {"title": "Untitled Dream", "tags": []}
-            
-        if not isinstance(metadata["tags"], list):
-            metadata["tags"] = []
-            
-        return metadata
+
+        # The strict schema guarantees the shape and the tag enum, but guard
+        # defensively against empty/unexpected content.
+        title = metadata.get("title") or "Untitled Dream"
+        tags = [t for t in metadata.get("tags", []) if t in ALLOWED_TAGS]
+        return {"title": title, "tags": tags}
     except Exception as e:
         logging.error(f"Error generating dream metadata: {str(e)}")
         return {"title": "Untitled Dream", "tags": []}
@@ -223,6 +289,47 @@ def sync_dreams_from_keep_to_blob(all_dreams):
     
     logging.info("Synchronization from Keep to Blob storage completed.")
 
+def is_untitled(dream):
+    """True if the note title shows metadata generation previously failed
+    (the 'Untitled Dream' fallback), so it should be regenerated."""
+    return "untitled dream" in (dream.title or "").lower()
+
+def _update_blob_labels(dream):
+    """Overwrite a stored dream's label list to match Keep (used after a tag
+    repair, so the summary API reflects the corrected tags)."""
+    blob_client = container_client.get_blob_client(f"{dream.id}.json")
+    blob_data = json.loads(blob_client.download_blob().readall().decode('utf-8'))
+    blob_data["labels"] = [label.name for label in dream.labels.all()]
+    blob_client.upload_blob(json.dumps(blob_data), overwrite=True)
+
+def repair_invalid_tags(all_dreams, blob_ids):
+    """Remap invalid/legacy tag labels to their canonical form across all dreams
+    (e.g. 'Nightmare Dream' -> 'Nightmare'), in both Keep and blob storage.
+    Leaves the master 'Dream' label and any unrelated labels untouched."""
+    keep_changed = False
+    for dream in all_dreams:
+        dream_changed = False
+        for label in list(dream.labels.all()):
+            canon = canonical_tag(label.name)
+            if canon and canon != label.name:
+                logging.info(f"Remapping tag '{label.name}' -> '{canon}' on dream {dream.id}")
+                dream.labels.remove(label)
+                canon_label = keep.findLabel(canon) or keep.createLabel(canon)
+                dream.labels.add(canon_label)
+                dream_changed = True
+        if dream_changed:
+            keep_changed = True
+            # Keep blob labels in sync for dreams already stored (others get
+            # written with correct labels when processed).
+            if dream.id in blob_ids:
+                try:
+                    _update_blob_labels(dream)
+                except Exception as e:
+                    logging.warning(f"Could not update blob labels for {dream.id}: {e}")
+    if keep_changed:
+        keep.sync()
+        logging.info("Invalid tag repair complete; synced to Keep.")
+
 def main(mytimer: func.TimerRequest) -> None:
     global keep, text_analytics_client, container_client, openai_client
 
@@ -244,22 +351,28 @@ def main(mytimer: func.TimerRequest) -> None:
     for dream in all_dreams:
         logging.info(f"Dream ID: {dream.id}, Title: {dream.title}, Created: {dream.timestamps.created}, Modified: {dream.timestamps.edited}")
     
-    logging.info("Fetching existing dreams.")
-    # First, synchronize existing dreams from Keep to Blob
+    # Identify what is already stored before making changes.
+    existing_dream_ids = set(os.path.splitext(blob.name)[0] for blob in container_client.list_blobs())
+
+    # Repair invalid/legacy tags (e.g. "Nightmare Dream" -> "Nightmare") across
+    # every dream, in Keep and blob, before syncing.
+    repair_invalid_tags(all_dreams, existing_dream_ids)
+
+    logging.info("Synchronizing dreams from Keep to blob storage.")
     sync_dreams_from_keep_to_blob(all_dreams)
 
-    logging.info("Fetching existing dreams from blob storage.")
-    existing_dream_ids = [os.path.splitext(blob.name)[0] for blob in container_client.list_blobs()]
-    
-    # Process new dreams only - don't modify existing dreams
+    # Process brand-new dreams, plus any previously-failed dreams still titled
+    # "Untitled Dream" (regenerate their title + tags).
     new_dreams = [dream for dream in all_dreams if dream.id not in existing_dream_ids]
-    logging.info(f"{len(new_dreams)} new dreams found.")
+    untitled_dreams = [dream for dream in all_dreams if dream.id in existing_dream_ids and is_untitled(dream)]
+    dreams_to_process = new_dreams + untitled_dreams
+    logging.info(f"{len(new_dreams)} new dreams; {len(untitled_dreams)} untitled dreams to regenerate.")
 
-    if not new_dreams:
-        logging.info("No new dreams to process.")
+    if not dreams_to_process:
+        logging.info("No dreams to process.")
         return
 
-    cog_dreams = batch([{"id": dream.id, "text": dream.text} for dream in new_dreams], 5)
+    cog_dreams = batch([{"id": dream.id, "text": dream.text} for dream in dreams_to_process], 5)
     cog_result_sentiment = []
     cog_result_key_phrases = []
     cog_result_entities = []
@@ -271,7 +384,7 @@ def main(mytimer: func.TimerRequest) -> None:
         cog_result_entities.extend(text_analytics_client.recognize_entities(cog_dream_batch))
 
     logging.info("Uploading dreams.")
-    for dream in new_dreams:
+    for dream in dreams_to_process:
         parsed_dream = parse_dream(dream)
         sentiment = parse_sentiment([d for d in cog_result_sentiment if d.id == dream.id][0])
         key_phrases = parse_key_phrases([d for d in cog_result_key_phrases if d.id == dream.id][0])
@@ -298,4 +411,4 @@ def main(mytimer: func.TimerRequest) -> None:
         parsed_dream["entities"] = entities
 
         blob_client = container_client.get_blob_client(dream.id + ".json")
-        blob_client.upload_blob(json.dumps(parsed_dream))
+        blob_client.upload_blob(json.dumps(parsed_dream), overwrite=True)

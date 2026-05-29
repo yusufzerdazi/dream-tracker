@@ -38,9 +38,6 @@ param sku string = 'Y1'
 @description('Comma-separated list of tag categories to exclude from public API data')
 param excludedTags string
 
-@description('Dream analyzer system prompt template')
-param dreamAnalyzerPrompt string
-
 var functionAppName = '${appName}functions'
 var hostingPlanName = appName
 var applicationInsightsName = appName
@@ -173,10 +170,6 @@ resource functionApp 'Microsoft.Web/sites@2022-03-01' = {
         {
           name: 'EXCLUDED_TAGS'
           value: excludedTags
-        }
-        {
-          name: 'DREAM_ANALYZER_PROMPT'
-          value: dreamAnalyzerPrompt
         }
       ]
       ftpsState: 'Disabled'
