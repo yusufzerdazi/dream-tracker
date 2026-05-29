@@ -123,7 +123,7 @@ def generate_dream_metadata(dream_text):
         prompt = prompt_template.format(dream_text=dream_text)
         
         response = openai_client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-5.4-mini",
             messages=[
                 {"role": "system", "content": "You are a dream analyzer that creates meaningful titles and tags for dreams."},
                 {"role": "user", "content": prompt}

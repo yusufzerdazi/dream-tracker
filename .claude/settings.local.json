@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "Bash(xargs ls -la)"
+      "Bash(xargs ls -la)",
+      "Bash(az version *)",
+      "Bash(az account *)"
     ]
   }
 }
