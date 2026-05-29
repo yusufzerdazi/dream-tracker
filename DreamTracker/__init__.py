@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import json
+import re
 
 import azure.functions as func
 import gkeepapi
@@ -39,15 +40,44 @@ def setup():
     container_client = blob_service_client.get_container_client("dreams")
     openai_client = OpenAI()
 
+# Leading UK-format date prefix ("DD/MM/YYYY", optionally followed by ": <title>").
+# When a note title already carries such a date, it is treated as the
+# authoritative dream date (overriding the Keep note's creation timestamp).
+TITLE_DATE_RE = re.compile(r'^\s*(\d{2})/(\d{2})/(\d{4})')
+
+
+def parse_title_date(title):
+    """Extract the dream date from a note title's leading DD/MM/YYYY prefix.
+
+    Returns a datetime (at midnight) or None if the title has no date prefix.
+    """
+    if not title:
+        return None
+    match = TITLE_DATE_RE.match(title)
+    if not match:
+        return None
+    day, month, year = (int(g) for g in match.groups())
+    try:
+        return datetime.datetime(year, month, day)
+    except ValueError:
+        return None
+
+
+def dream_date(keep_dream):
+    """The date a dream was recorded: from the title prefix if present,
+    otherwise the Keep note's creation timestamp."""
+    return parse_title_date(keep_dream.title) or keep_dream.timestamps.created
+
+
 def parse_dream(keep_dream):
     # Use edited time if available, otherwise fall back to created time
     last_modified = keep_dream.timestamps.edited if keep_dream.timestamps.edited else keep_dream.timestamps.created
-    
+
     return {
         "id": keep_dream.id,
         "title": keep_dream.title,
         "labels": [label.name for label in keep_dream.labels.all()],
-        "timestamp": str(keep_dream.timestamps.created),
+        "timestamp": str(dream_date(keep_dream)),
         "lastModified": str(last_modified),
         "text": keep_dream.text
     }
@@ -122,10 +152,11 @@ def generate_dream_metadata(dream_text):
 def update_keep_with_tags(dream, new_tags, ai_title):
     """Update Google Keep note with new tags, format title, and set color."""
     try:
-        # Format the title with date prefix "DD/MM/YYYY: <dream title>"
-        created_date = dream.timestamps.created
-        date_prefix = created_date.strftime("%d/%m/%Y")
-        
+        # Format the title with date prefix "DD/MM/YYYY: <dream title>".
+        # Prefer the date already embedded in the title (derived from the
+        # recording's creation metadata); fall back to the Keep creation time.
+        date_prefix = dream_date(dream).strftime("%d/%m/%Y")
+
         # Use the provided AI title
         new_title = f"{date_prefix}: {ai_title}"
         dream.title = new_title

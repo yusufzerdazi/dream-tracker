@@ -9,5 +9,3 @@ azure-core>=1.29.0
 azure-storage-blob>=12.19.0
 cryptography<39.0.0
 openai>=1.10.0
-msal>=1.28.0
-requests>=2.31.0

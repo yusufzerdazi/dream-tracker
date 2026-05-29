@@ -3,4 +3,3 @@
 local.settings.json
 test
 .venv
-auth_setup.py
